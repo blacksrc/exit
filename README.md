@@ -12,8 +12,8 @@ Only you sign in: the exit node joins with the key from step 2.
 Then get the script:
 
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/blacksrc/exit/main/exit-node.sh
-chmod +x exit-node.sh
+git clone https://github.com/blacksrc/exit.git
+cd exit
 ```
 
 ## 2. You: create a key
