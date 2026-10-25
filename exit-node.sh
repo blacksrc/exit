@@ -68,6 +68,25 @@ public_ip() {
   echo "${info:-unknown (no connectivity?)}"
 }
 
+# The CLI only talks to Tailscale itself (the app on macOS, tailscaled on Linux), so
+# start that if needed. `status --json` works even when logged out.
+start_tailscale() {
+  "$TS" status --json >/dev/null 2>&1 && return
+  echo "Starting Tailscale..."
+  if [[ "$OS" == Darwin ]]; then
+    echo "If macOS asks to allow a VPN configuration, click Allow."
+    open -a Tailscale
+  else
+    sudo systemctl enable --now tailscaled
+  fi
+  for _ in {1..30}; do
+    "$TS" status --json >/dev/null 2>&1 && return
+    sleep 1
+  done
+  echo "Tailscale still isn't running. Open the Tailscale app (macOS) or run: sudo systemctl start tailscaled"
+  exit 1
+}
+
 # Log in if needed: with the auth key if one is given (no sign-in here), else in the
 # browser. On Linux, --operator lets this script change settings without sudo.
 ensure_up() {
@@ -181,8 +200,8 @@ guide() {
 }
 
 case "${1:-}" in
-  "") guide ;;
-  share) share "${2:-}" ;;
-  unshare|on|off|status) "$1" ;;
+  "") start_tailscale; guide ;;
+  share) start_tailscale; share "${2:-}" ;;
+  unshare|on|off|status) start_tailscale; "$1" ;;
   *) usage; exit 1 ;;
 esac
