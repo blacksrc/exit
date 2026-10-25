@@ -57,6 +57,14 @@ current_exit() {
     | awk '$1 ~ /[.:]/ { for (i = 3; i <= NF; i++) if ($i == "selected") print $2 }' || true
 }
 
+# Tailscale IP of exit node $1 (its listed hostname or short name). Older Tailscale
+# rejects the listed hostname for --exit-node, but every version accepts the IP.
+node_ip() {
+  "$TS" exit-node list 2>/dev/null | awk -v n="$1" '
+    $1 ~ /[.:]/ { name = tolower($2); short = name; sub(/\..*/, "", short)
+                  if (tolower(n) == name || tolower(n) == short) { print $1; exit } }' || true
+}
+
 # This computer's name on the tailnet.
 self_name() { "$TS" status --peers=false 2>/dev/null | awk 'NR == 1 {print $2}' || true; }
 
@@ -154,8 +162,9 @@ pick_node() {
 on() {
   ensure_up
   [[ -n "$NODE" ]] || pick_node
+  local ip; ip="$(node_ip "$NODE")"
   # allow-lan-access keeps your local network (printer, router, NAS) reachable.
-  ts_set --exit-node="$NODE" --exit-node-allow-lan-access=true
+  ts_set --exit-node="${ip:-$NODE}" --exit-node-allow-lan-access=true
   mkdir -p "${CONF%/*}"
   printf 'EXIT_NODE=%q\n' "$NODE" > "$CONF"
   sleep 2; echo -n "Now exiting from: "; public_ip
