@@ -57,12 +57,13 @@ current_exit() {
     | awk '$1 ~ /[.:]/ { for (i = 3; i <= NF; i++) if ($i == "selected") print $2 }' || true
 }
 
-# Tailscale IP of exit node $1 (its listed hostname or short name). Older Tailscale
-# rejects the listed hostname for --exit-node, but every version accepts the IP.
+# Tailscale IP of exit node $1 (its IP, listed hostname or short name), or nothing if
+# it isn't on the list. Older Tailscale rejects the listed hostname for --exit-node,
+# but every version accepts the IP.
 node_ip() {
   "$TS" exit-node list 2>/dev/null | awk -v n="$1" '
     $1 ~ /[.:]/ { name = tolower($2); short = name; sub(/\..*/, "", short)
-                  if (tolower(n) == name || tolower(n) == short) { print $1; exit } }' || true
+                  if (n == $1 || tolower(n) == name || tolower(n) == short) { print $1; exit } }' || true
 }
 
 # This computer's name on the tailnet.
@@ -73,6 +74,10 @@ public_ip() {
   # ipinfo.io answers with one "key": "value" per line; keep ip, country and org.
   info="$(curl -s --max-time 10 https://ipinfo.io/json \
     | awk -F'"' '$2 == "ip" || $2 == "country" || $2 == "org" {printf "%s%s", sep, $4; sep = " "}')" || true
+  # It turns away busy shared IPs (HTTP 429), so then ask Cloudflare's trace page:
+  # one key=value per line; keep ip and loc (the country).
+  [[ -n "$info" ]] || info="$(curl -s --max-time 10 https://www.cloudflare.com/cdn-cgi/trace \
+    | awk -F= '$1 == "ip" || $1 == "loc" {printf "%s%s", sep, $2; sep = " "}')" || true
   echo "${info:-unknown (no connectivity?)}"
 }
 
@@ -154,17 +159,25 @@ pick_node() {
   fi
   "$TS" exit-node list | sed '/^#/d; /^ *$/d'
   read -r def <<<"$nodes"
-  def="${NODE:-$def}"
-  read -rp "Exit node to use [$def]: " answer || exit 1
-  NODE="${answer:-$def}"
+  # Offer the last node used, unless it has left the list (renamed or removed).
+  [[ -n "$(node_ip "$NODE")" ]] && def="$NODE"
+  while :; do
+    read -rp "Exit node to use [$def]: " answer || exit 1
+    NODE="${answer:-$def}"
+    [[ -n "$(node_ip "$NODE")" ]] && return
+    echo "$NODE isn't on the list."
+  done
 }
 
 on() {
   ensure_up
-  [[ -n "$NODE" ]] || pick_node
   local ip; ip="$(node_ip "$NODE")"
+  if [[ -z "$ip" ]]; then
+    [[ -n "$NODE" ]] && echo "$NODE isn't one of your exit nodes (renamed or removed?)."
+    pick_node; ip="$(node_ip "$NODE")"
+  fi
   # allow-lan-access keeps your local network (printer, router, NAS) reachable.
-  ts_set --exit-node="${ip:-$NODE}" --exit-node-allow-lan-access=true
+  ts_set --exit-node="$ip" --exit-node-allow-lan-access=true
   mkdir -p "${CONF%/*}"
   printf 'EXIT_NODE=%q\n' "$NODE" > "$CONF"
   sleep 2; echo -n "Now exiting from: "; public_ip
